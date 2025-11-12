@@ -1,6 +1,6 @@
-﻿# Data Science
+﻿﻿# Demi-Journée Data Science
 
-Repo de travail M1 – Modèles de régression linéaire et outils du diagnostic.
+Dépôt de travail M1 – Modèles de régression linéaire et outils du diagnostic.
 
 ## Branches
 - **main** : vide
