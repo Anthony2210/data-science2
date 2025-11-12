@@ -6,7 +6,7 @@ Groupe composé de :
 - Dylla Liesse Izere
 - Youssef El Alaoui
 - Anthony Combes--Aguéra
-- 
+
 ## Branches
 - **main** : vide
 - **code** : notebooks, scripts
