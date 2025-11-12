@@ -1,0 +1,643 @@
+---
+title: "JourDataScience"
+output: html_document
+date: "2025-11-12"
+---
+```{r}
+install.packages("corrplot")
+install.packages("mvtnorm")
+```
+
+
+
+
+```{r}
+#GENERATION DES DONNEES AVEC LA FONCTION GENERATE PARTIE 2.1
+generate.lm <- function(n = 100, p = 10, p0 = 3, sigma = 1, rho = 0) {
+  # 1. Matrice de covariance des prédicteurs
+  SigmaX <- matrix(rho, nrow = p, ncol = p)
+  diag(SigmaX) <- 1
+  
+  # 2. Génération des prédicteurs X ~ N(0, SigmaX)
+  if (!requireNamespace("MASS", quietly = TRUE)) {
+    stop("Le package MASS doit être installé : install.packages('MASS')")
+  }
+  X <- MASS::mvrnorm(n = n, mu = rep(0, p), Sigma = SigmaX)
+  
+  # 3. Définition du vecteur des coefficients vrais
+  beta_star <- c(runif(p0, 1, 2), rep(0, p - p0))
+  
+  # 4. Génération de l’erreur et de Y
+  eps <- rnorm(n, mean = 0, sd = sigma)
+  Y <- X %*% beta_star + eps
+  
+  # 5. Retourner toutes les composantes utiles
+  return(list(X = X, Y = as.vector(Y), beta_star = beta_star, SigmaX = SigmaX))
+}
+
+```
+
+
+```{r}
+data <- generate.lm(n = 100, p = 10, p0 = 3, sigma = 2, rho = 0.5)
+str(data)
+```
+
+```{r}
+#exploration des données
+#prédicteurs
+head(data$X)
+
+# Vrais coefficients
+data$beta_star
+
+# Corrélation entre variables
+cor(data$X)
+
+# Matrice de corrrélation
+cor_matrice <- cor(data$X)
+cor_matrice[1:5, 1:5]
+library(corrplot)
+corrplot(cor_matrice, method = "color", 
+         type = "upper", tl.col = "black", tl.srt = 45,
+         title = "Corrélations entre les variables X")
+
+```
+
+```{r}
+# PARTIE 2.2
+# Dépendance par blocs
+# ---- Dépendance nécessaire ----
+
+library(mvtnorm)
+
+# Répartition 1..p en K blocs 
+.make_blocks <- function(p, K) {
+  if (K < 1 || K > p) stop("K doit être entre 1 et p.")
+  sizes <- rep(floor(p / K), K)
+  sizes[seq_len(p %% K)] <- sizes[seq_len(p %% K)] + 1
+  split(seq_len(p), rep(seq_len(K), times = sizes))
+}
+
+# Matrice de covariance par blocs :
+# s ii = 1
+# s ij = rho si i≠j et i, j dans le même bloc
+# s ij = 0 sinon
+.make_sigma_bloc <- function(p, K, rho) {
+  if (rho < 0 || rho >= 1) stop("rho doit être dans [0,1).")
+  blocks <- .make_blocks(p, K)
+  Sigma <- matrix(0, p, p)
+  diag(Sigma) <- 1
+  for (b in blocks) {
+    if (length(b) > 1) {
+      Sigma[b, b] <- rho           # intra-bloc = rho
+      diag(Sigma)[b] <- 1          # on remet 1 sur la diagonale
+    }
+  }
+  Sigma
+}
+
+# Génération du modèle linéaire avec dépendance par blocs
+# - n : nombre d'observations
+# - p : nombre total de prédicteurs
+# - p0 : nb de coefficients non nuls
+# - sigma2 : variance du bruit
+# - rho : corrélation intra-bloc
+# - K : nombre de blocs
+generate.lm.bloc <- function(n, p, p0, sigma2, rho, K) {
+  if (p0 > p) stop("p0 doit être <= p.")
+  
+  # 1) S_X par blocs
+  sigmaMatrix <- .make_sigma_bloc(p, K, rho)
+  
+  # 2) Prédicteurs X ~ N(0, S_X)
+  X <- rmvnorm(n = n, mean = rep(0, p), sigma = sigmaMatrix)
+  
+  # 3) Vrais coefficients beta : p0 non nuls (magnitudes U[1,2], signe ±)
+  mags  <- runif(p0, 1, 2)
+  signs <- sample(c(-1, 1), p0, replace = TRUE)
+  beta  <- rep(0, p)
+  beta[sample.int(p, p0)] <- mags * signs
+  
+  # 4) Réponse Y = X beta + E,  E ~ N(0, sigma2 I)
+  eps <- rnorm(n, mean = 0, sd = sqrt(sigma2))
+  y   <- as.vector(X %*% beta + eps)
+  
+  # 5) Sortie demandée en 2.2 (sans train/test)
+  list(y = y, X = X, beta = beta, sigmaMatrix = sigmaMatrix)
+}
+
+
+```
+
+```{r}
+# EXEMPLE D'UTILISATION
+set.seed(123)
+sim <- generate.lm.bloc(n = 100, p = 12, p0 = 4, sigma2 = 1, rho = 0.6, K = 3)
+
+str(sim)                 # y, X, beta, sigmaMatrix
+round(cor(sim$X)[1:6,1:6], 2)  # pour voir la structure en blocs dans la corrélation
+which(sim$beta != 0)     # indices des vraies variables actives
+
+```
+
+
+
+```{r}
+# PARTIE 2.3
+# Helpers issus de 2.2 :
+# .make_blocks(p, K)
+# .make_sigma_bloc(p, K, rho)
+
+.split_train_test <- function(X, y, n.train, n.test) {
+  n <- n.train + n.test
+  idx <- sample.int(n, n)
+  itrain <- idx[seq_len(n.train)]
+  itest  <- idx[(n.train + 1):n]
+  list(
+    train = list(X = X[itrain, , drop = FALSE], y = y[itrain]),
+    test  = list(X = X[itest , , drop = FALSE], y = y[itest ])
+  )
+}
+
+
+generate.lm.bloc <- function(n.train, p, p0, sigma2, rho, K, n.test = 10 * n.train) {
+  n <- n.train + n.test
+  
+  sigmaMatrix <- .make_sigma_bloc(p, K, rho)
+  X <- mvtnorm::rmvnorm(n = n, mean = rep(0, p), sigma = sigmaMatrix)
+  
+  mags  <- runif(p0, 1, 2)
+  signs <- sample(c(-1, 1), p0, replace = TRUE)
+  beta  <- rep(0, p)
+  beta[sample.int(p, p0)] <- mags * signs
+  
+  eps <- rnorm(n, 0, sqrt(sigma2))
+  y   <- as.vector(X %*% beta + eps)
+  
+  st <- .split_train_test(X, y, n.train, n.test)
+  
+  list(
+    y = y, X = X, beta = beta, sigmaMatrix = sigmaMatrix,
+    rho = rho, K = K,
+    train = st$train, test = st$test
+  )
+}
+
+```
+
+
+```{r}
+# EXEMPLE D'UTILISATION
+set.seed(123)
+
+# Vérifier que la fonction existe
+exists("generate.lm.bloc")  # 
+
+# Générer
+sim_blk <- generate.lm.bloc(n.train = 120, p = 12, p0 = 4,
+                            sigma2 = 1.5, rho = 0.6, K = 3, n.test = 600)
+
+str(sim_blk$train); str(sim_blk$test)
+#indice de vraies variables 
+sim_blk$Sstar                 
+round(cor(sim_blk$X)[1:8, 1:8], 2)
+
+```
+
+
+```{r}
+# 2.4 IMPLEMENTATION DES METHODES
+library(leaps)
+library(MASS)
+# ----- utilitaires communs -----
+.mk_df <- function(X, y) {
+  df <- data.frame(Y = y, X)
+  colnames(df) <- c("Y", paste0("X", seq_len(ncol(X))))
+  df
+}
+
+# transforme un objet lm en vecteur beta_hat de longueur p (0 si var absente)
+.lm_to_beta <- function(fit, p) {
+  b <- rep(0, p)
+  nm <- names(coef(fit))
+  if (length(nm) > 1) {
+    keeps <- nm[-1]
+    idx <- as.integer(sub("^X", "", keeps))
+    b[idx] <- coef(fit)[-1]
+  }
+  b
+}
+
+
+# Cp 
+getBestSubset_Cp <- function(X, y, nvmax = ncol(X)) {
+  df <- .mk_df(X, y)
+  rs <- regsubsets(Y ~ ., data = df, nvmax = nvmax, really.big=TRUE)            # Leaps & Bounds
+  sm <- summary(rs)
+  which_mat <- sm$which                                         # (Intercept, X1..Xp)
+  best_row <- which.min(sm$cp)                                  # min Cp
+  keep <- which_mat[best_row, -1]                               # sans intercept
+  form <- if (!any(keep)) Y ~ 1 else as.formula(paste("Y ~", paste0("X", which(keep), collapse = "+")))
+  fit <- lm(form, data = df)
+  .lm_to_beta(fit, ncol(X))
+}
+
+# AIC / BIC — on refit un lm pour chaque ligne du tableau 'which'
+getBestSubset_IC <- function(X, y, ic = c("AIC","BIC"), nvmax = ncol(X)) {
+  ic <- match.arg(ic)
+  df <- .mk_df(X, y)
+  rs <- regsubsets(Y ~ ., data = df, nvmax = nvmax, really.big= TRUE)
+  sm <- summary(rs)
+  which_mat <- sm$which
+
+  scores <- apply(which_mat, 1, function(row_keep) {
+    keep <- row_keep[-1]
+    form <- if (!any(keep)) Y ~ 1 else as.formula(paste("Y ~", paste0("X", which(keep), collapse = "+")))
+    fit <- lm(form, data = df)
+    if (ic == "AIC") AIC(fit) else BIC(fit)
+  })
+
+  best_row <- which.min(scores)
+  keep <- which_mat[best_row, -1]
+  form <- if (!any(keep)) Y ~ 1 else as.formula(paste("Y ~", paste0("X", which(keep), collapse = "+")))
+  fit <- lm(form, data = df)
+  .lm_to_beta(fit, ncol(X))
+}
+
+# façade unique
+getBestSubset <- function(X, y, criterion = c("Cp","AIC","BIC"), nvmax = ncol(X)) {
+  criterion <- match.arg(criterion)
+  switch(criterion,
+         "Cp"  = getBestSubset_Cp(X, y, nvmax),
+         "AIC" = getBestSubset_IC(X, y, "AIC", nvmax),
+         "BIC" = getBestSubset_IC(X, y, "BIC", nvmax))
+}
+# métriques
+pred <- function(X, b) as.vector(X %*% b)
+rmse <- function(y, yhat) sqrt(mean((y - yhat)^2))
+TP <- function(bhat, bstar) sum((bhat != 0) & (bstar != 0))
+FP <- function(bhat, bstar) sum((bhat != 0) & (bstar == 0))
+```
+
+```{r}
+# sim_blk contient train/test et le vrai beta
+Xtr <- sim_blk$train$X; ytr <- sim_blk$train$y
+Xte <- sim_blk$test$X;  yte <- sim_blk$test$y
+beta_star <- sim_blk$beta
+
+b_cp  <- getBestSubset(Xtr, ytr, "Cp")
+b_aic <- getBestSubset(Xtr, ytr, "AIC")
+b_bic <- getBestSubset(Xtr, ytr, "BIC")
+
+res <- data.frame(
+  Methode = c("Cp","AIC","BIC"),
+  RMSE    = c(rmse(yte, pred(Xte, b_cp)),
+              rmse(yte, pred(Xte, b_aic)),
+              rmse(yte, pred(Xte, b_bic))),
+  Taille  = c(sum(b_cp!=0), sum(b_aic!=0), sum(b_bic!=0)),
+  TP      = c(TP(b_cp, beta_star), TP(b_aic, beta_star), TP(b_bic, beta_star)),
+  FP      = c(FP(b_cp, beta_star), FP(b_aic, beta_star), FP(b_bic, beta_star))
+)
+res
+
+```
+
+```{r}
+# ----- Fonction pour calculer Cp, AIC et BIC selon la taille du modèle -----
+get_scores <- function(X, y, nvmax = ncol(X)) {
+  df <- data.frame(Y = y, X)
+  colnames(df) <- c("Y", paste0("X", 1:ncol(X)))
+
+  rs <- regsubsets(Y ~ ., data = df, nvmax = nvmax)
+  sm <- summary(rs)
+  which_mat <- sm$which
+
+  # Cp direct
+  Cp <- sm$cp
+
+  # AIC et BIC : on refit des modèles lm pour chaque sous-modèle
+  get_ic <- function(fun) {
+    apply(which_mat, 1, function(row_keep) {
+      keep <- row_keep[-1]
+      form <- if (!any(keep)) stats::as.formula("Y ~ 1") else
+        stats::reformulate(paste0("X", which(keep)), response = "Y")
+      fit <- stats::lm(form, data = df)
+      fun(fit)
+    })
+  }
+
+  AICv <- get_ic(stats::AIC)
+  BICv <- get_ic(stats::BIC)
+
+  data.frame(
+    Taille = seq_len(nrow(which_mat)),
+    Cp  = Cp,
+    AIC = AICv,
+    BIC = BICv
+  )
+}
+
+# Jeu d'entraînement
+Xtr <- sim_blk$train$X
+ytr <- sim_blk$train$y
+
+# Calcul des scores
+scores <- get_scores(Xtr, ytr)
+
+# Graphique Cp
+plot(scores$Taille, scores$Cp,
+     type = "b", col = "red2", pch = 19, lwd = 2,
+     xlab = "Taille du modèle (k)", ylab = "Critère Cp",
+     main = "Recherche exhaustive — Critère Cp")
+points(scores$Taille, scores$Cp, pch = 20, col = "gray40", cex = 1)
+points(which.min(scores$Cp), min(scores$Cp), col = "blue", pch = 19, cex = 1.5)
+abline(v = which.min(scores$Cp), lty = 2, col = "blue")
+legend("topright", legend = sprintf("min Cp: k = %d", which.min(scores$Cp)),
+       col = "blue", pch = 19, bty = "n")
+
+
+```
+
+```{r}
+# Graphe pour le AIC
+# AIC
+plot(scores$Taille, scores$AIC,
+     type = "b", col = "darkorange", pch = 19, lwd = 2,
+     xlab = "Taille du modèle (k)", ylab = "Critère AIC",
+     main = "Recherche exhaustive — AIC")
+imin_aic <- which.min(scores$AIC)
+points(scores$Taille[imin_aic], scores$AIC[imin_aic], col = "blue", pch = 19, cex = 1.5)
+abline(v = scores$Taille[imin_aic], lty = 2, col = "blue")
+legend("topright", legend = sprintf("min AIC: k = %d", scores$Taille[imin_aic]),
+       col = "blue", pch = 19, bty = "n")
+
+
+```
+
+```{r}
+#Graphe pour le BIC
+# BIC
+plot(scores$Taille, scores$BIC,
+     type = "b", col = "seagreen", pch = 19, lwd = 2,
+     xlab = "Taille du modèle (k)", ylab = "Critère BIC",
+     main = "Recherche exhaustive — BIC")
+imin_bic <- which.min(scores$BIC)
+points(scores$Taille[imin_bic], scores$BIC[imin_bic], col = "blue", pch = 19, cex = 1.5)
+abline(v = scores$Taille[imin_bic], lty = 2, col = "blue")
+legend("topright", legend = sprintf("min BIC: k = %d", scores$Taille[imin_bic]),
+       col = "blue", pch = 19, bty = "n")
+
+```
+
+```{r}
+# 3. Comparaison des modèles 
+
+# 3.1 EVALUATION DES PERFORMANCES 
+
+## Monte-Carlo : protocole d'évaluation
+
+# 1) 
+run_one <- function(seed,
+                    n.train, p, p0, sigma2, rho, K, n.test = 10 * n.train) {
+  if (!is.null(seed)) set.seed(seed)
+
+  sim <- generate.lm.bloc(n.train = n.train, p = p, p0 = p0,
+                          sigma2 = sigma2, rho = rho, K = K, n.test = n.test)
+
+  Xtr <- sim$train$X; ytr <- sim$train$y
+  Xte <- sim$test$X;  yte <- sim$test$y
+  bstar <- sim$beta
+
+  # Estimations best-subset
+  b_cp  <- getBestSubset(Xtr, ytr, "Cp")
+  b_aic <- getBestSubset(Xtr, ytr, "AIC")
+  b_bic <- getBestSubset(Xtr, ytr, "BIC")
+
+  # Métriques test
+  data.frame(
+    Methode = c("Cp","AIC","BIC"),
+    RMSE    = c(rmse(yte, pred(Xte, b_cp)),
+                rmse(yte, pred(Xte, b_aic)),
+                rmse(yte, pred(Xte, b_bic))),
+    Taille  = c(sum(b_cp!=0), sum(b_aic!=0), sum(b_bic!=0)),
+    TP      = c(TP(b_cp, bstar), TP(b_aic, bstar), TP(b_bic, bstar)),
+    FP      = c(FP(b_cp, bstar), FP(b_aic, bstar), FP(b_bic, bstar))
+  )
+}
+
+# 2) Boucle Monte-Carlo 
+mc_bestsubset <- function(B = 100,
+                          n.train, p, p0, sigma2, rho, K, n.test = 10 * n.train,
+                          seed0 = 123) {
+  # exécute B répétitions avec des seeds différentes 
+  res_list <- vector("list", B)
+  for (b in seq_len(B)) {
+    res_list[[b]] <- try(
+      run_one(seed = seed0 + b - 1, n.train=n.train, p=p, p0=p0,
+              sigma2=sigma2, rho=rho, K=K, n.test=n.test),
+      silent = TRUE
+    )
+    # 
+    if (inherits(res_list[[b]], "try-error")) res_list[[b]] <- NULL
+  }
+  res_all <- do.call(rbind, res_list)
+
+  # Résumé par méthode : moyenne et sd
+  agg_mean <- aggregate(cbind(RMSE, Taille, TP, FP) ~ Methode,
+                        data = res_all, FUN = mean)
+  agg_sd   <- aggregate(cbind(RMSE, Taille, TP, FP) ~ Methode,
+                        data = res_all, FUN = sd)
+  names(agg_sd)[-1] <- paste0(names(agg_sd)[-1], "_sd")
+
+  summary_tab <- merge(agg_mean, agg_sd, by = "Methode", sort = FALSE)
+  list(raw = res_all, summary = summary_tab)
+}
+
+# 3) Exemple : lance une expérience
+set.seed(42)
+mc <- mc_bestsubset(
+  B = 100,
+  n.train = 120, p = 12, p0 = 4,
+  sigma2 = 1.5, rho = 0.6, K = 3,
+  n.test = 1000
+)
+
+# Résultats bruts (100*3 lignes) et résumé par méthode
+head(mc$raw)
+mc$summary
+
+```
+
+```{r}
+# Boxplots RMSE et Taille par méthode
+par(mfrow = c(1,2))
+boxplot(RMSE ~ Methode, data = mc$raw, main = "RMSE (test)", ylab = "RMSE")
+boxplot(Taille ~ Methode, data = mc$raw, main = "Taille du modèle", ylab = "Nombre de variables")
+par(mfrow = c(1,1))
+
+```
+
+```{r}
+# 3.2 Planning des situations
+## Monte-Carlo multi-scénarios (rho, sigma2) 
+
+# Une répétition pour un scénario 
+.run_one <- function(seed, n.train, p, p0, sigma2, rho, K, n.test = 10 * n.train) {
+  if (!is.null(seed)) set.seed(seed)
+  sim <- generate.lm.bloc(n.train = n.train, p = p, p0 = p0,
+                          sigma2 = sigma2, rho = rho, K = K, n.test = n.test)
+  Xtr <- sim$train$X; ytr <- sim$train$y
+  Xte <- sim$test$X;  yte <- sim$test$y
+  bstar <- sim$beta
+
+  b_cp  <- getBestSubset(Xtr, ytr, "Cp")
+  b_aic <- getBestSubset(Xtr, ytr, "AIC")
+  b_bic <- getBestSubset(Xtr, ytr, "BIC")
+
+  data.frame(
+    Methode = c("Cp","AIC","BIC"),
+    RMSE    = c(rmse(yte, pred(Xte, b_cp)),
+                rmse(yte, pred(Xte, b_aic)),
+                rmse(yte, pred(Xte, b_bic))),
+    Taille  = c(sum(b_cp!=0), sum(b_aic!=0), sum(b_bic!=0)),
+    TP      = c(TP(b_cp, bstar), TP(b_aic, bstar), TP(b_bic, bstar)),
+    FP      = c(FP(b_cp, bstar), FP(b_aic, bstar), FP(b_bic, bstar))
+  )
+}
+
+# Monte-Carlo sur une grille rho x sigma2
+mc_grid_bestsubset <- function(B = 100,
+                               n.train, p, p0, K,
+                               rhos = c(0, 0.3, 0.6, 0.9),
+                               sigma2s = c(0.5, 1, 2),
+                               n.test = 10 * n.train,
+                               seed0 = 123) {
+  res <- list()
+  cnt <- 1
+  for (rho in rhos) {
+    for (sigma2 in sigma2s) {
+      runs <- vector("list", B)
+      for (b in seq_len(B)) {
+        runs[[b]] <- .run_one(seed = seed0 + b - 1, n.train=n.train, p=p, p0=p0,
+                              sigma2=sigma2, rho=rho, K=K, n.test=n.test)
+      }
+      runs_df <- do.call(rbind, runs)
+      runs_df$rho <- rho
+      runs_df$sigma2 <- sigma2
+      res[[cnt]] <- runs_df
+      cnt <- cnt + 1
+    }
+  }
+  raw <- do.call(rbind, res)
+
+  # Résumé par (Méthode, rho, sigma2)
+  agg_mean <- aggregate(cbind(RMSE, Taille, TP, FP) ~ Methode + rho + sigma2,
+                        data = raw, FUN = mean)
+  agg_sd   <- aggregate(cbind(RMSE, Taille, TP, FP) ~ Methode + rho + sigma2,
+                        data = raw, FUN = sd)
+  names(agg_sd)[-(1:3)] <- paste0(names(agg_sd)[-(1:3)], "_sd")
+
+  summary_tab <- merge(agg_mean, agg_sd, by = c("Methode","rho","sigma2"), sort = FALSE)
+  list(raw = raw, summary = summary_tab)
+}
+
+```
+
+```{r}
+set.seed(42)
+mcg <- mc_grid_bestsubset(
+  B = 50,                 # nombre de répétitions par scénario
+  n.train = 120, p = 12, p0 = 4, K = 3,
+  rhos = c(0, 0.3, 0.6, 0.9),
+  sigma2s = c(0.5, 1, 2),
+  n.test = 1000
+)
+
+head(mcg$summary)
+
+```
+
+```{r}
+# Visualisation
+
+
+library(ggplot2)
+
+ggplot(mcg$summary, aes(x = rho, y = RMSE, color = Methode, group = Methode)) +
+  geom_line() + geom_point() +
+  facet_wrap(~ sigma2, labeller = label_bquote(sigma^2 == .(sigma2))) +
+  labs(title = "RMSE (test) vs corrélation ρ — facettes par σ²",
+       x = expression(rho), y = "RMSE (test)") +
+  theme_minimal()
+
+```
+
+```{r}
+# i = identifiant de simulation
+getOneSimu <- function(i,
+                       n.train = 100, p = 50, p0 = 10,
+                       sigma2 = 1, rho = 0.6, K = 5,
+                       n.test = 10 * n.train) {
+  sim <- generate.lm.bloc(n.train = n.train, p = p, p0 = p0,
+                          sigma2 = sigma2, rho = rho, K = K, n.test = n.test)
+  Xtr <- sim$train$X; ytr <- sim$train$y
+  Xte <- sim$test$X;  yte <- sim$test$y
+  bstar <- sim$beta
+
+  b_cp  <- getBestSubset(Xtr, ytr, "Cp")
+  b_aic <- getBestSubset(Xtr, ytr, "AIC")
+  b_bic <- getBestSubset(Xtr, ytr, "BIC")
+
+  one_row <- function(method_label, b_hat) {
+    yhat <- pred(Xte, b_hat)
+    sm   <- support_metrics(b_hat, bstar)
+    tibble(
+      method = method_label,
+      mse    = mse(yte, yhat),
+      err    = err(yte, yhat),
+      acc    = sm$acc,
+      sen    = sm$sen,
+      spe    = sm$spe,
+      n.p    = p / n.train,
+      sigma2 = sigma2,
+      simu   = i
+    )
+  }
+
+  dplyr::bind_rows(
+    one_row("bestsubset_Cp",  b_cp),
+    one_row("bestsubset_AIC", b_aic),
+    one_row("bestsubset_BIC", b_bic)
+  )
+}
+
+```
+
+
+```{r}
+library(leaps)
+set.seed(123)
+n_simu <- 10  # nb répétitions Monte-Carlo
+
+
+res <- dplyr::bind_rows(lapply(seq_len(n_simu), getOneSimu))
+
+print(res)
+
+# Résumé des résultats (moyenne et écart-type)
+res %>%
+  group_by(method) %>%
+  summarise(across(c(mse, acc, sen, spe),
+                   list(mean = mean, sd = sd),
+                   .names = "{.col}_{.fn}"))
+```
+
+
+
+
+
+
+
+
+
