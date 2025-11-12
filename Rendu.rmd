@@ -1,0 +1,105 @@
+```{r}
+source("generate.R")
+
+# Cas 1 : indépendant
+data1 <- generate_lm(n.train = 100, p = 20, p0 = 5, sigma2 = 1)
+str(data1)
+```
+```{r}
+# Cas 2 : corrélation AR(1)
+data2 <- generate_lm_long(n.train = 100, p = 20, p0 = 5, sigma2 = 1, rho = 0.6)
+str(data2)
+```
+
+```{r}
+# Cas 3 : corrélation par blocs
+data3 <- generate_lm_block(n.train = 100, p = 20, p0 = 5, sigma2 = 1, rho = 0.6, K = 5)
+str(data3)
+```
+
+```{r}
+perf <- function(X_test, y_test, beta, beta.star) {
+  nzero <- which(beta != 0)
+  zero  <- which(beta == 0)
+  true.nzero <- which(beta.star != 0)
+  true.zero  <- which(beta.star == 0)
+  
+  TP <- sum(nzero %in% true.nzero)
+  TN <- sum(zero %in%  true.zero)
+  FP <- sum(nzero %in% true.zero)
+  FN <- sum(zero %in%  true.nzero)
+  
+  recall <- TP/(TP + FN)
+  specificity <- TN/(FP + TN)
+  precision <- TP/(TP + FP)
+  
+  recall[TP + FN == 0] <- NA
+  specificity[TN + FP == 0] <- NA
+  precision[TP + FP == 0] <- NA
+  
+  rmse <- sqrt(mean((beta - beta.star)^2, na.rm = TRUE))
+  rerr <- sqrt(mean((y_test - X_test %*% beta)^2))
+  
+  res <- round(c(precision, recall, specificity, rmse, rerr), 4)
+  res[is.nan(res)] <- 0
+  names(res) <- c("precision", "recall", "specificity", "rmse", "prediction")
+  res
+}
+```
+
+```{r}
+source("methods.R")
+
+X_train <- data1$X[data1$train, ]
+y_train <- data1$y[data1$train]
+X_test <- data1$X[data1$test, ]
+y_test <- data1$y[data1$test]
+
+# Méthodes
+beta_ols <- getOLS(X_train, y_train)
+beta_aic <- getStepwiseAIC(X_train, y_train)
+beta_bic <- getStepwiseBIC(X_train, y_train)
+beta_oracle <- getOracle(X_train, y_train, data1$beta)
+
+# Évaluation
+perf_ols <- perf(X_test, y_test, beta_ols, data1$beta)
+perf_aic <- perf(X_test, y_test, beta_aic, data1$beta)
+perf_bic <- perf(X_test, y_test, beta_bic, data1$beta)
+perf_oracle <- perf(X_test, y_test, beta_oracle, data1$beta)
+
+rbind(OLS = perf_ols,
+      StepwiseAIC = perf_aic,
+      StepwiseBIC = perf_bic,
+      Oracle = perf_oracle)
+
+```
+
+```{r}
+source("simulate.R")
+set.seed(42)
+res_indep <- map_dfr(1:10, ~ getOneSimu(.x, "indep"))
+res_ar1   <- map_dfr(1:10, ~ getOneSimu(.x, "ar1", rho = 0.6))
+res_block <- map_dfr(1:10, ~ getOneSimu(.x, "block", rho = 0.6))
+
+res_all <- bind_rows(res_indep, res_ar1, res_block)
+res_all
+```
+
+```{r}
+library(ggplot2)
+
+# Exemple : erreur de prédiction
+ggplot(res_all, aes(x = method, y = prediction, fill = structure)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Erreur de prédiction selon la structure de corrélation",
+       y = "Erreur de prédiction (test)", x = "")
+
+# Exemple : précision du support
+ggplot(res_all, aes(x = method, y = precision, fill = structure)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Précision de sélection selon la structure",
+       y = "Précision", x = "")
+
+```
