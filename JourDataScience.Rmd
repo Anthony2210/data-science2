@@ -113,7 +113,7 @@ generate.lm.bloc <- function(n, p, p0, sigma2, rho, K) {
   # 2) Prédicteurs X ~ N(0, S_X)
   X <- rmvnorm(n = n, mean = rep(0, p), sigma = sigmaMatrix)
   
-  # 3) Vrais coefficients beta : p0 non nuls (magnitudes U[1,2], signe ±)
+  # 3) Vrais coefficients beta : p0 non nuls 
   mags  <- runif(p0, 1, 2)
   signs <- sample(c(-1, 1), p0, replace = TRUE)
   beta  <- rep(0, p)
@@ -145,7 +145,7 @@ which(sim$beta != 0)     # indices des vraies variables actives
 
 ```{r}
 # PARTIE 2.3
-# Helpers issus de 2.2 :
+#  :
 # .make_blocks(p, K)
 # .make_sigma_bloc(p, K, rho)
 
@@ -191,7 +191,7 @@ generate.lm.bloc <- function(n.train, p, p0, sigma2, rho, K, n.test = 10 * n.tra
 # EXEMPLE D'UTILISATION
 set.seed(123)
 
-# Vérifier que la fonction existe
+# 
 exists("generate.lm.bloc")  # 
 
 # Générer
@@ -304,7 +304,7 @@ res
 ```
 
 ```{r}
-# ----- Fonction pour calculer Cp, AIC et BIC selon la taille du modèle -----
+# Fonction pour calculer Cp, AIC et BIC selon la taille du modèle
 get_scores <- function(X, y, nvmax = ncol(X)) {
   df <- data.frame(Y = y, X)
   colnames(df) <- c("Y", paste0("X", 1:ncol(X)))
@@ -316,7 +316,7 @@ get_scores <- function(X, y, nvmax = ncol(X)) {
   # Cp direct
   Cp <- sm$cp
 
-  # AIC et BIC : on refit des modèles lm pour chaque sous-modèle
+  # AIC et BIC : 
   get_ic <- function(fun) {
     apply(which_mat, 1, function(row_keep) {
       keep <- row_keep[-1]
@@ -616,6 +616,7 @@ getOneSimu <- function(i,
 
 
 ```{r}
+
 library(leaps)
 set.seed(123)
 n_simu <- 10  # nb répétitions Monte-Carlo
