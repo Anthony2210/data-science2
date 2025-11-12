@@ -82,7 +82,7 @@ generate_lm <- function(n, p, p0, sigma2) {
   # Matrice de covariance identité (variables indépendantes)
   SigmaX <- diag(p)
   
-  # Génération des prédicteurs X ~ N(0, I_p)
+  # Génération des prédicteurs X  N(0, I_p)
   X <- mvrnorm(n = n, mu = rep(0, p), Sigma = SigmaX)
   
   # Génération des coefficients beta*
@@ -112,7 +112,7 @@ data_simple$beta
 
 
 ```{r, echo=TRUE}
-library(mvtnorm)  # pour la génération multivariée gaussienne
+library(mvtnorm)  
 
 generate_lm_bloc <- function(n, p, K, K0, sigma2, rho) {
   # Taille des blocs
@@ -148,13 +148,6 @@ str(data_bloc)
 data_bloc$beta
 round(data_bloc$SigmaX[1:12, 1:12], 2)
 ```
-Nous avons simulé un modèle linéaire avec dépendance par blocs entre les prédicteurs.
-Les 12 variables explicatives sont réparties en 3 blocs de taille égale (4 variables par bloc).
-Seul le premier bloc est corrélé avec un coefficient ρ = 0.8, tandis que les deux autres sont indépendants.
-Trois variables parmi les 12 ont un effet réel sur la variable réponse Y.
-Ce scénario introduit une multi-colinéarité partielle entre les variables, permettant d’évaluer la robustesse des méthodes de sélection de variables en présence de corrélation.
-
-
 
 # 2.3 - Génération des ensembles train/test
 # Compatible avec les scénarios :
@@ -200,11 +193,9 @@ round(data_bloc$SigmaX[1:12, 1:12], 2)
 
 
 
-2.4 Test de Student – Sélection de variables
+## 2.4 Test de Student – Sélection de variables
 
 ```{r, echo=TRUE}
-
-# 2.4 - Sélection de variables via le Test de Student
 
 getStudentSelection <- function(X, y, alpha = 0.05) {
   if (is.null(colnames(X))) {
@@ -218,7 +209,7 @@ getStudentSelection <- function(X, y, alpha = 0.05) {
   form <- as.formula(paste("y ~", paste(colnames(X), collapse = " + ")))
   model <- lm(form, data = data)
   
-  # Extraction des p-values (hors intercept)
+  # Extraction des p-values
   p_values <- summary(model)$coefficients[-1, 4]
   
   # Sélection des variables significatives
@@ -245,7 +236,6 @@ getStudentSelection <- function(X, y, alpha = 0.05) {
   )
 }
 
-
 # Exemple d'application du Test de Student
 
 set.seed(42)
@@ -259,7 +249,7 @@ student_res <- getStudentSelection(data_bloc$X_train, data_bloc$y_train)
 cat("Variables sélectionnées :", student_res$selected_vars, "\n\n")
 cat("P-values :\n")
 print((student_res$p_values))
-cat("\nCoefficients estimés (β̂) :\n")
+cat("\nCoefficients estiméŝ (beta_chapeau) :\n")
 print(round(student_res$beta_hat, 4))
 
 cat("\nCoefficients vrai (̂beta) :\n")
@@ -303,15 +293,14 @@ getPerformance <- function(X_test, y_test, beta_hat, beta_true) {
   
   # Résumé des résultats
   res <- round(c(precision, recall, specificity, rmse, prediction_error), 4)
-  names(res) <- c("Précision", "Sensibilité", "Spécificité", "RMSE_β", "Erreur_prédiction")
+  names(res) <- c("Précision", "Sensibilité", "Spécificité", "RMSE", "Erreur_prédiction")
   return(res)
 }
 
-# ---------------------------------------------------------
-# 💡 Application : évaluer ton modèle Student
-# ---------------------------------------------------------
 
-# Tu as déjà ton data_bloc et ton student_res :
+#  Application : évaluer ton modèle Student
+
+
 perf_student <- getPerformance(
   X_test = data_bloc$X_test,
   y_test = data_bloc$y_test,
@@ -320,13 +309,14 @@ perf_student <- getPerformance(
 )
 
 # Affichage
-cat("📊 Performances du Test de Student :\n")
+cat(" Performances du Test de Student :\n")
 print(perf_student)
 
 ```
 
 
-3.2 
+# 3.2 Planning de simulations
+
 ```{r, echo=TRUE}
 
 #  Packages nécessaires
@@ -336,17 +326,14 @@ library(pbmcapply)
 library(tibble)
 
 
-# Fonction de simulation unique : getOneSimu()
 
 getOneSimu <- function(i, n_train = 100, p = 12, p0 = 3, sigma2 = 1) {
   #  Génération d’un jeu de données
   data <- generate_lm_split(n_train = n_train, p = p, p0 = p0, sigma2 = sigma2)
   
-  #  Application des méthodes de sélection
-  # Test de Student
   student <- getStudentSelection(data$X_train, data$y_train)
   
-  #  Évaluation des performances (en utilisant ta fonction 3.1)
+  #  Évaluation des performances 
   perf_student <- getPerformance(data$X_test, data$y_test, student$beta_hat, data$beta)
   
   #  Mise en forme dans un tableau tidy
@@ -366,7 +353,7 @@ getOneSimu <- function(i, n_train = 100, p = 12, p0 = 3, sigma2 = 1) {
 }
 
 
-# 🚀 Lancer plusieurs simulations
+# Lancer plusieurs simulations
 
 set.seed(42)
 n_simu <- 10
@@ -376,7 +363,7 @@ res_all <- pbmclapply(1:n_simu, getOneSimu, mc.cores = 2) %>%
   bind_rows()
 
 
-# 📊 Résumé final
+# Résumé final
 
 print(res_all)
 
@@ -394,7 +381,7 @@ summary_results <- res_all %>%
 print(summary_results)
 ```
 
-3.3
+# 3.3 Planning de simulations
 
 ```{r, echo=TRUE}
 
@@ -413,11 +400,11 @@ ggplot(res_all, aes(x = method, y = err_pred, fill = method)) +
   theme_minimal(base_size = 14) +
   theme(legend.position = "none")
 
-# Boxplot du RMSE des coefficients β̂
+# Boxplot du RMSE des coefficients beta_chapeau
 ggplot(res_all, aes(x = method, y = rmse, fill = method)) +
   geom_boxplot(alpha = 0.7) +
   labs(
-    title = "Erreur RMSE sur les coefficients estimés (β̂)",
+    title = "Erreur RMSE sur les coefficients estimés (̂beta_chapeau)",
     x = "Méthode",
     y = "RMSE moyen"
   ) +
