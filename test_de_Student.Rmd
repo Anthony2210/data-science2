@@ -1,0 +1,424 @@
+
+---
+title: "Demi-journée Data Science : Protocole de simulation"
+author: "Membre 1 - Génération des données"
+date: "2025"
+output: html_document
+---
+
+# 1. Protocole de simulation
+
+Pour illustrer le modèle linéaire simulé :
+
+```{r, echo=TRUE}
+set.seed(1)
+n <- 50; p <- 5
+X <- matrix(rnorm(n * p), n, p)  # prédicteurs indépendants
+beta <- c(2, 0, -1.5, 0, 0)      # vrais coefficients
+y <- X %*% beta + rnorm(n, 0, 1) # modèle linéaire avec bruit
+
+head(X)
+head(y)
+```
+
+1.2 Contrôle de la difficulté
+
+	
+Illustration du rôle de ces paramètres
+
+a) Influence du bruit
+
+```{r, echo=TRUE}
+set.seed(123)
+n <- 100; p <- 3
+X <- matrix(rnorm(n * p), n, p)
+beta <- c(2, -1, 0.5)
+
+# Bruit faible vs bruit fort
+y1 <- X %*% beta + rnorm(n, 0, 0.5)
+y2 <- X %*% beta + rnorm(n, 0, 3)
+
+par(mfrow=c(1,2))
+plot(y1, X %*% beta, main="Bruit faible (σ²=0.5)", pch=19, col="steelblue")
+plot(y2, X %*% beta, main="Bruit fort (σ²=9)", pch=19, col="tomato")
+```
+
+
+b) Influence de la corrélation
+
+```{r, echo=TRUE}
+Sigma1 <- diag(3)                        # indépendance
+Sigma2 <- matrix(0.8, 3, 3); diag(Sigma2) <- 1  # forte corrélation
+
+library(MASS)
+X1 <- mvrnorm(100, mu=rep(0,3), Sigma=Sigma1)
+X2 <- mvrnorm(100, mu=rep(0,3), Sigma=Sigma2)
+
+pairs(X1, main="Variables indépendantes")
+pairs(X2, main="Variables fortement corrélées")
+```
+
+
+c) Influence du ratio p/n
+
+```{r, echo=TRUE}
+n1 <- 100; p1 <- 5
+n2 <- 50;  p2 <- 100
+
+X_small <- matrix(rnorm(n1 * p1), n1, p1)
+X_big   <- matrix(rnorm(n2 * p2), n2, p2)
+
+dim(X_small)
+dim(X_big)
+```
+
+
+
+# 2.1 Modèle linéaire (cas simple)
+
+
+```{r, echo=TRUE}
+generate_lm <- function(n, p, p0, sigma2) {
+  # Matrice de covariance identité (variables indépendantes)
+  SigmaX <- diag(p)
+  
+  # Génération des prédicteurs X  N(0, I_p)
+  X <- mvrnorm(n = n, mu = rep(0, p), Sigma = SigmaX)
+  
+  # Génération des coefficients beta*
+  beta <- rep(0, p)
+  non_zero <- sample(1:p, p0)  # positions non nulles
+  beta[non_zero] <- runif(p0, 1, 2) * sample(c(-1, 1), p0, replace = TRUE)
+  
+  # Génération du bruit et de Y
+  eps <- rnorm(n, 0, sqrt(sigma2))
+  y <- X %*% beta + eps
+  
+  # Résultat
+  list(y = as.numeric(y), X = X, beta = beta, SigmaX = SigmaX)
+}
+
+# Exemple de simulation contrôlée
+set.seed(123)
+data_simple <- generate_lm(n = 100, p = 10, p0 = 3, sigma2 = 1)
+str(data_simple)
+data_simple$beta
+
+```
+
+
+
+# 2.2 Structure de dépendance des prédicteurs (scénario par blocs)
+
+
+```{r, echo=TRUE}
+library(mvtnorm)  
+
+generate_lm_bloc <- function(n, p, K, K0, sigma2, rho) {
+  # Taille des blocs
+  block_size <- p / K
+  
+  # Matrice de covariance en blocs
+  SigmaX <- matrix(0, p, p)
+  for (k in 1:K) {
+    indices <- ((k - 1) * block_size + 1):(k * block_size)
+    SigmaX[indices, indices] <- if (k <= K0) rho else 0
+    diag(SigmaX)[indices] <- 1
+  }
+  
+  # Génération des prédicteurs corrélés
+  X <- mvrnorm(n = n, mu = rep(0, p), Sigma = SigmaX)
+  
+  # Coefficients vrais
+  beta <- rep(0, p)
+  non_zero <- sample(1:p, 3)
+  beta[non_zero] <- runif(3, 1, 2) * sample(c(-1, 1), 3, replace = TRUE)
+  
+  # Génération de Y
+  eps <- rnorm(n, 0, sqrt(sigma2))
+  y <- X %*% beta + eps
+  
+  list(y = as.numeric(y), X = X, beta = beta, SigmaX = SigmaX)
+}
+
+# Exemple
+set.seed(42)
+data_bloc <- generate_lm_bloc(n = 100, p = 12, K = 3, K0 = 1, sigma2 = 1, rho = 0.8)
+str(data_bloc)
+data_bloc$beta
+round(data_bloc$SigmaX[1:12, 1:12], 2)
+```
+
+# 2.3 - Génération des ensembles train/test
+# Compatible avec les scénarios :
+#  - "simple" : variables indépendantes
+#  - "bloc"   : variables corrélées par bloc
+
+
+```{r, echo=TRUE}
+library(mvtnorm)
+
+generate_lm_split <- function(n_train, p, p0, sigma2, n_test = 10 * n_train, type = "simple") {
+  if (type == "simple") {
+    train_data <- generate_lm(n = n_train, p = p, p0 = p0, sigma2 = sigma2)
+    test_data  <- generate_lm(n = n_test,  p = p, p0 = p0, sigma2 = sigma2)
+  } else if (type == "bloc") {
+    train_data <- generate_lm_bloc(n = n_train, p = p, K = 3, K0 = 1, sigma2 = sigma2, rho = 0.8)
+    test_data  <- generate_lm_bloc(n = n_test,  p = p, K = 3, K0 = 1, sigma2 = sigma2, rho = 0.8)
+  } else {
+    stop("Type non reconnu. Choisir 'simple' ou 'bloc'.")
+  }
+  
+  list(
+    X_train = train_data$X,
+    y_train = train_data$y,
+    X_test  = test_data$X,
+    y_test  = test_data$y,
+    beta    = train_data$beta,
+    SigmaX  = train_data$SigmaX
+  )
+}
+```
+
+
+```{r, echo=TRUE}
+set.seed(42)
+data_bloc <- generate_lm_split(n_train = 100, p = 12, p0 = 3, sigma2 = 1, type = "bloc")
+
+# Vérification
+str(data_bloc)
+data_bloc$beta
+round(data_bloc$SigmaX[1:12, 1:12], 2)
+```
+
+
+
+## 2.4 Test de Student – Sélection de variables
+
+```{r, echo=TRUE}
+
+getStudentSelection <- function(X, y, alpha = 0.05) {
+  if (is.null(colnames(X))) {
+    colnames(X) <- paste0("X", 1:ncol(X))
+  }
+  
+  data <- as.data.frame(X)
+  data$y <- y
+  
+  # Modèle linéaire complet
+  form <- as.formula(paste("y ~", paste(colnames(X), collapse = " + ")))
+  model <- lm(form, data = data)
+  
+  # Extraction des p-values
+  p_values <- summary(model)$coefficients[-1, 4]
+  
+  # Sélection des variables significatives
+  selected_vars <- names(p_values)[p_values < alpha]
+  if (length(selected_vars) == 0) {
+    selected_vars <- names(sort(p_values))[1] # garde la variable la plus proche du seuil
+  }
+  
+  # Nouveau modèle restreint
+  form_sel <- as.formula(paste("y ~", paste(selected_vars, collapse = " + ")))
+  model_sel <- lm(form_sel, data = data)
+  
+  # Création du vecteur beta_hat aligné sur les colonnes de X
+  beta_hat <- rep(0, ncol(X))
+  names(beta_hat) <- colnames(X)
+  beta_hat[selected_vars] <- coef(model_sel)[-1]
+  
+  list(
+    model_full = model,
+    model_selected = model_sel,
+    selected_vars = selected_vars,
+    p_values = p_values,
+    beta_hat = beta_hat
+  )
+}
+
+# Exemple d'application du Test de Student
+
+set.seed(42)
+data_bloc <- generate_lm_split(n_train = 100, p = 12, p0 = 3, sigma2 = 1, type = "bloc")
+
+# Sélection des variables significatives
+colnames(data_bloc$X_train) <- paste0("X", 1:ncol(data_bloc$X_train))
+student_res <- getStudentSelection(data_bloc$X_train, data_bloc$y_train)
+
+# Résultats
+cat("Variables sélectionnées :", student_res$selected_vars, "\n\n")
+cat("P-values :\n")
+print((student_res$p_values))
+cat("\nCoefficients estiméŝ (beta_chapeau) :\n")
+print(round(student_res$beta_hat, 4))
+
+cat("\nCoefficients vrai (̂beta) :\n")
+print(round(data_bloc$beta, 4))
+```
+
+3.1
+
+
+```{r, echo=TRUE}
+
+#  Fonction d’évaluation des performances
+
+getPerformance <- function(X_test, y_test, beta_hat, beta_true) {
+  
+  # Indices des variables sélectionnées (non nulles)
+  nzero <- which(beta_hat != 0)
+  zero  <- which(beta_hat == 0)
+  
+  # Indices des vraies variables non nulles
+  true_nzero <- which(beta_true != 0)
+  true_zero  <- which(beta_true == 0)
+  
+  # Comptage des cas
+  TP <- sum(nzero %in% true_nzero)  # vraies positives
+  TN <- sum(zero %in%  true_zero)   # vraies négatives
+  FP <- sum(nzero %in% true_zero)   # fausses positives
+  FN <- sum(zero %in%  true_nzero)  # fausses négatives
+  
+  # Métriques de sélection
+  recall <- TP / (TP + FN)                # sensibilité
+  specificity <- TN / (TN + FP)           # spécificité
+  precision <- TP / (TP + FP)             # précision du support
+  recall[is.nan(recall)] <- 0
+  specificity[is.nan(specificity)] <- 0
+  precision[is.nan(precision)] <- 0
+  
+  # Erreurs
+  rmse <- sqrt(mean((beta_hat - beta_true)^2))       # erreur quadratique moyenne sur β̂
+  prediction_error <- sqrt(mean((y_test - X_test %*% beta_hat)^2))  # erreur de prédiction
+  
+  # Résumé des résultats
+  res <- round(c(precision, recall, specificity, rmse, prediction_error), 4)
+  names(res) <- c("Précision", "Sensibilité", "Spécificité", "RMSE", "Erreur_prédiction")
+  return(res)
+}
+
+
+#  Application : évaluer ton modèle Student
+
+
+perf_student <- getPerformance(
+  X_test = data_bloc$X_test,
+  y_test = data_bloc$y_test,
+  beta_hat = student_res$beta_hat,
+  beta_true = data_bloc$beta
+)
+
+# Affichage
+cat(" Performances du Test de Student :\n")
+print(perf_student)
+
+```
+
+
+# 3.2 Planning de simulations
+
+```{r, echo=TRUE}
+
+#  Packages nécessaires
+
+library(tidyverse)
+library(pbmcapply)
+library(tibble)
+
+
+
+getOneSimu <- function(i, n_train = 100, p = 12, p0 = 3, sigma2 = 1) {
+  #  Génération d’un jeu de données
+  data <- generate_lm_split(n_train = n_train, p = p, p0 = p0, sigma2 = sigma2)
+  
+  student <- getStudentSelection(data$X_train, data$y_train)
+  
+  #  Évaluation des performances 
+  perf_student <- getPerformance(data$X_test, data$y_test, student$beta_hat, data$beta)
+  
+  #  Mise en forme dans un tableau tidy
+  res <- tibble(
+    method = "Test_Student",
+    precision = perf_student["Précision"],
+    recall = perf_student["Sensibilité"],
+    specificity = perf_student["Spécificité"],
+    rmse = perf_student["RMSE"],
+    err_pred = perf_student["Erreur_prédiction"],
+    p = p,
+    sigma2 = sigma2,
+    simu = i
+  )
+  
+  return(res)
+}
+
+
+# Lancer plusieurs simulations
+
+set.seed(42)
+n_simu <- 10
+
+# Parallélisation avec pbmcapply
+res_all <- pbmclapply(1:n_simu, getOneSimu, mc.cores = 2) %>%
+  bind_rows()
+
+
+# Résumé final
+
+print(res_all)
+
+# Moyennes sur toutes les simulations
+summary_results <- res_all %>%
+  group_by(method) %>%
+  summarise(
+    precision_moy = mean(precision),
+    recall_moy = mean(recall),
+    specificity_moy = mean(specificity),
+    rmse_moy = mean(rmse),
+    err_pred_moy = mean(err_pred)
+  )
+
+print(summary_results)
+```
+
+# 3.3 Planning de simulations
+
+```{r, echo=TRUE}
+
+# Visualisation des résultats des simulations
+
+library(ggplot2)
+
+# Boxplot des erreurs de prédiction par méthode
+ggplot(res_all, aes(x = method, y = err_pred, fill = method)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(
+    title = "Erreur de prédiction selon la méthode",
+    x = "Méthode de sélection",
+    y = "Erreur de prédiction (moyenne)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none")
+
+# Boxplot du RMSE des coefficients beta_chapeau
+ggplot(res_all, aes(x = method, y = rmse, fill = method)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(
+    title = "Erreur RMSE sur les coefficients estimés (̂beta_chapeau)",
+    x = "Méthode",
+    y = "RMSE moyen"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none")
+
+# Boxplot de la précision
+ggplot(res_all, aes(x = method, y = precision, fill = method)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(
+    title = "Précision du support sélectionné (variables pertinentes)",
+    x = "Méthode",
+    y = "Précision"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none")
+```
