@@ -67,7 +67,7 @@ corrplot(cor_matrice, method = "color",
 ```{r}
 # PARTIE 2.2
 # Dépendance par blocs
-# ---- Dépendance nécessaire ----
+# Dépendance nécessaire 
 
 library(mvtnorm)
 
@@ -79,7 +79,7 @@ library(mvtnorm)
   split(seq_len(p), rep(seq_len(K), times = sizes))
 }
 
-# Matrice de covariance par blocs :
+# Matrice de covariance par blocs : 
 # s ii = 1
 # s ij = rho si i≠j et i, j dans le même bloc
 # s ij = 0 sinon
