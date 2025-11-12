@@ -6,17 +6,16 @@ library(gridExtra)
 # Cas 1 : indépendant
 data1 <- generate_lm(n.train = 100, p = 20, p0 = 5, sigma2 = 1)
 str(data1)
-```
-```{r}
+
 # Cas 2 : corrélation AR(1)
 data2 <- generate_lm_long(n.train = 100, p = 20, p0 = 5, sigma2 = 1, rho = 0.6)
 str(data2)
-```
-```{r}
+
 # Cas 3 : corrélation par blocs
-data3 <- generate_lm_block(n.train = 100, p = 20, p0 = 5, sigma2 = 1, rho = 0.6, K = 4)
+data3 <- generate_lm_block(n.train = 100, p = 20, p0 = 5, sigma2 = 1, rho = 0.6, K = 3)
 str(data3)
 ```
+
 ```{r}
 plot_corr <- function(Sigma, titre) {
   df <- as.data.frame(as.table(round(Sigma, 2)))
@@ -64,8 +63,9 @@ perf <- function(X_test, y_test, beta, beta.star) {
   rerr <- sqrt(mean((y_test - X_test %*% beta)^2))
   
   res <- round(c(precision, recall, specificity, rmse, rerr), 4)
-  res[is.nan(res)] <- 0
+  res[is.na(res)] <- 0
   names(res) <- c("precision", "recall", "specificity", "rmse", "prediction")
+  
   res
 }
 ```
@@ -73,10 +73,11 @@ perf <- function(X_test, y_test, beta, beta.star) {
 ```{r}
 source("methods.R")
 
-X_train <- data1$X[data1$train, ]
-y_train <- data1$y[data1$train]
-X_test <- data1$X[data1$test, ]
-y_test <- data1$y[data1$test]
+X_train <- data3$X[data3$train, ]
+y_train <- data3$y[data3$train]
+X_test <- data3$X[data3$test, ]
+y_test <- data3$y[data3$test]
+beta_true <- data3$beta
 
 # Méthodes
 beta_ols <- getOLS(X_train, y_train)
@@ -84,24 +85,28 @@ beta_best <- getBestSubset(X_train, y_train, criterion = "bic")
 beta_aic <- getStepwiseAIC(X_train, y_train)
 beta_bic <- getStepwiseBIC(X_train, y_train)
 beta_lasso <- getLasso(X_train, y_train)
-beta_oracle <- getOracle(X_train, y_train, data1$beta)
+beta_oracle <- getOracle(X_train, y_train, beta_true)
 
-# Évaluation
-perf_ols <- perf(X_test, y_test, beta_ols, data1$beta)
-pref_bestSubset <- perf(X_test, y_test, beta_best, data1$beta)
-perf_aic <- perf(X_test, y_test, beta_aic, data1$beta)
-perf_bic <- perf(X_test, y_test, beta_bic, data1$beta)
-perf_lasso <- perf(X_test, y_test, beta_lasso, data1$beta)
-perf_oracle <- perf(X_test, y_test, beta_oracle, data1$beta)
+# Évaluation contre beta_true
 
-rbind(OLS = perf_ols,
-      BestSubset = pref_bestSubset,
-      StepwiseAIC = perf_aic,
-      StepwiseBIC = perf_bic,
-      LASSO = perf_lasso,
-      Oracle = perf_oracle)
+res_tab <- rbind(
+  OLS         = perf(X_test, y_test, beta_ols,    beta_true),
+  BestSubset  = perf(X_test, y_test, beta_best,   beta_true),
+  StepwiseAIC = perf(X_test, y_test, beta_aic,    beta_true),
+  StepwiseBIC = perf(X_test, y_test, beta_bic,    beta_true),
+  LASSO       = perf(X_test, y_test, beta_lasso,  beta_true),
+  Oracle      = perf(X_test, y_test, beta_oracle, beta_true)
+)
+res_tab
 
 ```
+#OLS : OLS met quasi tout non-zéro. Comme les 5 vraies sont dedans, recall=1, mais il ajoute 15−0=15 faux positifs -> specificity=0 et precision=5/20=0.25. Mauvaise parcimonie, prédiction moyenne.
+
+#BestSubset : Ils retrouvent les 5 vraies (recall=1) mais ajoutent 3 faux positifs -> specificity=12/15=0.80, precision=5/(5+3)=0.625. Meilleure parcimonie que OLS, prédiction correcte.
+
+#LASSO : Toujours recall=1, mais un peu plus de FP (environ 4), d’où precision ≈ 5/9. -> meilleur rmse des beta (shrinkage) et meilleure erreur de prédiction parmi les méthodes réalistes.
+
+#Oracle : Référence idéale, connait le vrai support. Meilleur sur coefficients et prédiction (proche du bruit, ecart-type = 1). Sert de plafond de performance.
 
 ```{r}
 source("simulate.R")
@@ -140,4 +145,94 @@ lasso_comp <- res_all %>%
        y = "RMSE moyen sur les coefficients", x = "Structure de corrélation")
 
 lasso_comp
+```
+
+```{r}
+# Validation du modèle OLS sur data1
+fit_ols <- lm(y_train ~ X_train)
+
+# Résidus
+res <- resid(fit_ols)
+
+# 1. Graphique des résidus vs valeurs ajustées
+plot(fitted(fit_ols), res,
+     xlab = "Valeurs ajustées", ylab = "Résidus",
+     main = "Résidus vs valeurs ajustées")
+abline(h = 0, col = "red")
+
+# 2. QQ-plot pour vérifier la normalité
+qqnorm(res)
+qqline(res, col = "blue")
+
+# 3. Test de normalité
+shapiro.test(res)
+
+```
+
+```{r}
+library(leaps)
+leaps_fit <- regsubsets(y_train ~ ., data = as.data.frame(X_train), nvmax = 10)
+summary_fit <- summary(leaps_fit)
+
+plot(summary_fit$bic, type = "b", pch = 19,
+     main = "Critère BIC selon la taille du modèle",
+     xlab = "Nombre de variables", ylab = "BIC")
+
+```
+
+```{r}
+library(caret)
+
+df_train <- as.data.frame(X_train)
+colnames(df_train) <- paste0("x", 1:ncol(X_train))
+df_train$y <- y_train
+
+# Validation croisée avec sélection AIC
+set.seed(42)
+cv_fit <- train(
+  y ~ .,                      # formule correcte
+  data = df_train,            # data.frame avec colonnes nommées
+  method = "lmStepAIC",       # régression linéaire avec sélection de variables
+  trControl = trainControl(method = "cv", number = 5)
+)
+
+cv_fit$results
+
+```
+
+```{r}
+# Résumé des performances par itération
+cv_fit$resample
+
+# Moyenne des métriques de CV
+cv_fit$resample %>%
+  summarise(across(where(is.numeric), mean))
+
+ggplot(cv_fit$resample, aes(x = RMSE)) +
+  geom_histogram(fill = "steelblue", color = "white", bins = 10) +
+  theme_minimal() +
+  labs(
+    title = "Distribution du RMSE sur les 5 folds de validation croisée",
+    x = "RMSE (erreur quadratique moyenne)",
+    y = "Fréquence"
+  )
+
+```
+
+```{r}
+# Résumé global des performances moyennes
+res_summary <- res_all %>%
+  group_by(method, structure) %>%
+  summarise(across(c(precision, recall, specificity, rmse, prediction), mean)) %>%
+  arrange(prediction)
+
+res_summary
+
+ggplot(res_summary, aes(x = method, y = prediction, fill = structure)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Erreur moyenne de prédiction par méthode et structure",
+       y = "Erreur moyenne (test)", x = "") +
+  coord_flip()
+
 ```
