@@ -1,5 +1,7 @@
 ```{r}
 source("generate.R")
+library(ggplot2)
+library(gridExtra)
 
 # Cas 1 : indépendant
 data1 <- generate_lm(n.train = 100, p = 20, p0 = 5, sigma2 = 1)
@@ -10,13 +12,34 @@ str(data1)
 data2 <- generate_lm_long(n.train = 100, p = 20, p0 = 5, sigma2 = 1, rho = 0.6)
 str(data2)
 ```
-
 ```{r}
 # Cas 3 : corrélation par blocs
-data3 <- generate_lm_block(n.train = 100, p = 20, p0 = 5, sigma2 = 1, rho = 0.6, K = 5)
+data3 <- generate_lm_block(n.train = 100, p = 20, p0 = 5, sigma2 = 1, rho = 0.6, K = 4)
 str(data3)
 ```
+```{r}
+plot_corr <- function(Sigma, titre) {
+  df <- as.data.frame(as.table(round(Sigma, 2)))
+  ggplot(df, aes(Var1, Var2, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "white", high = "steelblue", midpoint = 0.3, limits = c(0, 1)) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text = element_blank(),
+  axis.ticks = element_blank(),
+  panel.grid = element_blank(),
+  legend.position = "none",
+  plot.title = element_text(hjust = 0.5, face = "bold")) +
+  coord_fixed() +
+  labs(title = titre, x = "", y = "")
+}
 
+p1 <- plot_corr(data1$sigmaMatrix, "Indépendant")
+p2 <- plot_corr(data2$sigmaMatrix, "AR(1) (p = 0.6)")
+p3 <- plot_corr(data3$sigmaMatrix, "Blocs (p = 0.6, K = 4)")
+
+grid.arrange(p1, p2, p3, ncol = 3,
+top = "Comparaison des structures de corrélation")
+```
 ```{r}
 perf <- function(X_test, y_test, beta, beta.star) {
   nzero <- which(beta != 0)
@@ -57,19 +80,25 @@ y_test <- data1$y[data1$test]
 
 # Méthodes
 beta_ols <- getOLS(X_train, y_train)
+beta_best <- getBestSubset(X_train, y_train, criterion = "bic")
 beta_aic <- getStepwiseAIC(X_train, y_train)
 beta_bic <- getStepwiseBIC(X_train, y_train)
+beta_lasso <- getLasso(X_train, y_train)
 beta_oracle <- getOracle(X_train, y_train, data1$beta)
 
 # Évaluation
 perf_ols <- perf(X_test, y_test, beta_ols, data1$beta)
+pref_bestSubset <- perf(X_test, y_test, beta_best, data1$beta)
 perf_aic <- perf(X_test, y_test, beta_aic, data1$beta)
 perf_bic <- perf(X_test, y_test, beta_bic, data1$beta)
+perf_lasso <- perf(X_test, y_test, beta_lasso, data1$beta)
 perf_oracle <- perf(X_test, y_test, beta_oracle, data1$beta)
 
 rbind(OLS = perf_ols,
+      BestSubset = pref_bestSubset,
       StepwiseAIC = perf_aic,
       StepwiseBIC = perf_bic,
+      LASSO = perf_lasso,
       Oracle = perf_oracle)
 
 ```
@@ -86,20 +115,29 @@ res_all
 ```
 
 ```{r}
-library(ggplot2)
-
-# Exemple : erreur de prédiction
+# erreur de prédiction
 ggplot(res_all, aes(x = method, y = prediction, fill = structure)) +
   geom_boxplot() +
   theme_minimal() +
   labs(title = "Erreur de prédiction selon la structure de corrélation",
        y = "Erreur de prédiction (test)", x = "")
 
-# Exemple : précision du support
+# précision du support
 ggplot(res_all, aes(x = method, y = precision, fill = structure)) +
   geom_boxplot() +
   theme_minimal() +
   labs(title = "Précision de sélection selon la structure",
        y = "Précision", x = "")
+```
 
+```{r}
+lasso_comp <- res_all %>%
+  filter(method %in% c("LASSO", "Oracle")) %>%
+  ggplot(aes(x = structure, y = rmse, fill = method)) +
+  geom_bar(stat = "summary", fun = "mean", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Erreur des coefficients : LASSO / Oracle",
+       y = "RMSE moyen sur les coefficients", x = "Structure de corrélation")
+
+lasso_comp
 ```

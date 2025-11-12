@@ -1,11 +1,5 @@
-# =========================================================
 # GENERATION DES DONNEES POUR LE MODELE LINEAIRE
-# =========================================================
 
-# Packages nécessaires
-if (!requireNamespace("mvtnorm", quietly = TRUE)) {
-  install.packages("mvtnorm")
-}
 library(mvtnorm)
 
 
@@ -28,16 +22,15 @@ make_SigmaX <- function(p, structure = c("indep", "ar1", "block"),
   
   # Cas 3 : dépendance par blocs
   if (structure == "block") {
-    groups <- rep(1:K, length.out = p)
-    Sigma <- matrix(0, nrow = p, ncol = p)
-    diag(Sigma) <- 1
-    for (g in unique(groups)) {
-      idx <- which(groups == g)
-      if (length(idx) > 1) {
-        Sigma[idx, idx] <- rho
-        diag(Sigma)[idx] <- 1
-      }
+    Sigma <- diag(p)
+    block_size <- p / K
+    
+    for (b in seq(1, p, by = block_size)) {
+      idx <- b:(b + block_size - 1)
+      Sigma[idx, idx] <- rho
+      diag(Sigma[idx, idx]) <- 1
     }
+    
     return(Sigma)
   }
 }
