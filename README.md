@@ -8,6 +8,6 @@ Groupe composé de :
 - Anthony Combes--Aguéra
 
 ## Branches
-- **main** : vide
+- **main** : support de présentation
 - **code** : notebooks, scripts
 - **img** : figures et images
